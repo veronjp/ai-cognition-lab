@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Flanker Experiment</title>
+    <style>
+        body {
+            font-family: system-ui, sans-serif;
+            max-width: 36rem;
+            margin: 3rem auto;
+            padding: 0 1rem;
+            line-height: 1.5;
+            text-align: center;
+        }
+
+        /* Make sure the "hidden" attribute always hides an element. */
+        [hidden] {
+            display: none !important;
+        }
+
+        #instructionsSection,
+        #summaryList {
+            text-align: left;
+        }
+
+        /* Fixed height so the page doesn't jump between fixation, stimulus and blank screen. */
+        #stimulus {
+            font-size: 3rem;
+            line-height: 5rem;
+            height: 5rem;
+            margin: 1.5rem 0;
+        }
+
+        button {
+            font-size: 1.1rem;
+            padding: 0.5rem 1.25rem;
+            cursor: pointer;
+        }
+
+        .note {
+            color: #555;
+            font-size: 0.9rem;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>The Flanker Experiment</h1>
+
+    <!-- Start screen: instructions and Start button -->
+    <section id="instructionsSection">
+        <h2>Instructions</h2>
+        <p>
+            In each trial, five arrows appear. Identify the direction of the
+            <strong>centre</strong> arrow and ignore the others.
+        </p>
+        <ul>
+            <li>Press the <strong>LEFT</strong> arrow key if the centre arrow points left.</li>
+            <li>Press the <strong>RIGHT</strong> arrow key if the centre arrow points right.</li>
+            <li>A + appears first. Keep your eyes on it.</li>
+            <li>Respond as quickly and accurately as you can.</li>
+            <li>There are 10 trials. You will not see feedback.</li>
+        </ul>
+        <p style="text-align: center;">
+            <button id="startButton">Start Experiment</button>
+        </p>
+    </section>
+
+    <!-- Experiment screen: progress, fixation cross, stimulus -->
+    <section id="experimentSection" hidden>
+        <p id="progress"></p>
+        <div id="stimulus"></div>
+        <p class="note">Press the LEFT or RIGHT arrow key.</p>
+    </section>
+
+    <!-- Results screen: shown only after all trials are finished -->
+    <section id="resultsSection" hidden>
+        <h2>Experiment Complete</h2>
+        <ul id="summaryList"></ul>
+        <p class="note">
+            Reaction times use correct responses only.
+            Flanker effect = mean incongruent RT minus mean congruent RT.
+        </p>
+        <button id="downloadButton">Download CSV</button>
+    </section>
+
+    <script>
+        // ---------- Settings ----------
+
+        // The symbol shown for each direction.
+        const arrowSymbols = { left: "←", right: "→" };
+
+        const totalTrials = 10;
+        const fixationDuration = 500;   // milliseconds the + is shown
+        const blankDuration = 500;      // milliseconds of blank screen between trials
+
+        // ---------- Page elements ----------
+
+        const instructionsSection = document.getElementById("instructionsSection");
+        const startButton = document.getElementById("startButton");
+        const experimentSection = document.getElementById("experimentSection");
+        const progressElement = document.getElementById("progress");
+        const stimulusElement = document.getElementById("stimulus");
+        const resultsSection = document.getElementById("resultsSection");
+        const summaryList = document.getElementById("summaryList");
+        const downloadButton = document.getElementById("downloadButton");
+
+        // ---------- Building the trials ----------
+
+        // Shuffle an array into a random order (Fisher-Yates shuffle).
+        function shuffle(array) {
+            for (let i = array.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                const temp = array[i];
+                array[i] = array[j];
+                array[j] = temp;
+            }
+            return array;
+        }
+
+        // Create the list of 10 trials: 5 congruent, 5 incongruent, in random order.
+        // Each trial's target direction is chosen at random, separately from its condition.
+        function createTrialList() {
+            const conditions = [];
+            for (let i = 0; i < totalTrials / 2; i++) {
+                conditions.push("congruent");
+                conditions.push("incongruent");
+            }
+            shuffle(conditions);
+
+            const trialList = [];
+            for (const condition of conditions) {
+                const targetDirection = Math.random() < 0.5 ? "left" : "right";
+                trialList.push({ condition: condition, targetDirection: targetDirection });
+            }
+            return trialList;
+        }
+
+        // Build the five-arrow display for one trial.
+        // Congruent: flankers point the same way as the target.
+        // Incongruent: flankers point the opposite way.
+        function buildStimulus(trial) {
+            const oppositeDirection = trial.targetDirection === "left" ? "right" : "left";
+            const flankerDirection = trial.condition === "congruent"
+                ? trial.targetDirection
+                : oppositeDirection;
+
+            const flanker = arrowSymbols[flankerDirection];
+            const target = arrowSymbols[trial.targetDirection];
+            return [flanker, flanker, target, flanker, flanker].join(" ");
+        }
+
+        // ---------- Experiment state ----------
+
+        const trials = createTrialList();   // what will be shown
+        const results = [];                 // what the participant did (one entry per trial)
+        let currentTrialIndex = 0;          // 0 is the first trial
+        let stimulusOnset = 0;              // when the current stimulus appeared (ms)
+        let stimulusActive = false;         // true only while the stimulus is waiting for a response
+
+        // ---------- Running the experiment ----------
+
+        function startExperiment() {
+            instructionsSection.hidden = true;
+            experimentSection.hidden = false;
+            startTrial();
+        }
+
+        // Step 1: show the fixation cross, then show the stimulus after 500 ms.
+        function startTrial() {
+            progressElement.textContent = "Trial " + (currentTrialIndex + 1) + " of " + totalTrials;
+            stimulusElement.textContent = "+";
+            setTimeout(showStimulus, fixationDuration);
+        }
+
+        // Step 2: show the stimulus and start the reaction-time clock.
+        function showStimulus() {
+            stimulusElement.textContent = buildStimulus(trials[currentTrialIndex]);
+
+            // Wait until the browser is about to draw the screen, then start the clock
+            // and begin accepting responses.
+            requestAnimationFrame(function () {
+                stimulusOnset = performance.now();
+                stimulusActive = true;
+            });
+        }
+
+        // Runs every time a key is pressed.
+        function handleKeyPress(event) {
+            // Ignore every key except LEFT and RIGHT.
+            if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") {
+                return;
+            }
+
+            // Stop the browser from scrolling the page with the arrow keys.
+            event.preventDefault();
+
+            // Ignore a key that is being held down (it would repeat into the next trial).
+            if (event.repeat) {
+                return;
+            }
+
+            // Ignore responses unless a stimulus is on screen waiting for one.
+            // This also means only the first valid response to each stimulus counts.
+            if (!stimulusActive) {
+                return;
+            }
+            stimulusActive = false;
+
+            // Calculate reaction time.
+            const reactionTime = Math.round(performance.now() - stimulusOnset);
+
+            // Compare the response with this trial's target direction.
+            const trial = trials[currentTrialIndex];
+            const response = event.key === "ArrowLeft" ? "left" : "right";
+            const isCorrect = response === trial.targetDirection;
+
+            // Store this trial's result. No feedback is shown during the experiment.
+            results.push({
+                trialNumber: currentTrialIndex + 1,
+                condition: trial.condition,
+                targetDirection: trial.targetDirection,
+                response: response,
+                accuracy: isCorrect,
+                reactionTime: reactionTime
+            });
+
+            // Step 3: remove the stimulus, show a blank screen, then move on.
+            stimulusElement.textContent = "";
+            setTimeout(nextTrial, blankDuration);
+        }
+
+        // Start the next trial automatically, or finish after the last one.
+        function nextTrial() {
+            currentTrialIndex++;
+            if (currentTrialIndex < totalTrials) {
+                startTrial();
+            } else {
+                endExperiment();
+            }
+        }
+
+        function endExperiment() {
+            experimentSection.hidden = true;   // hides progress and response instructions
+            showSummary();
+            resultsSection.hidden = false;
+        }
+
+        // ---------- Results summary ----------
+
+        // Accuracy (%) for a list of trials. Returns null if the list is empty.
+        function calculateAccuracy(trialList) {
+            if (trialList.length === 0) {
+                return null;
+            }
+            // filter() keeps only the trials where accuracy is true.
+            const correctTrials = trialList.filter(trial => trial.accuracy);
+            return (correctTrials.length / trialList.length) * 100;
+        }
+
+        // Mean reaction time (ms) using correct responses only.
+        // Returns null if there are no correct responses.
+        function calculateMeanCorrectRT(trialList) {
+            const correctTrials = trialList.filter(trial => trial.accuracy);
+            if (correctTrials.length === 0) {
+                return null;
+            }
+            let total = 0;
+            for (const trial of correctTrials) {
+                total += trial.reactionTime;
+            }
+            return total / correctTrials.length;
+        }
+
+        // Turn a number (or null) into text for the page.
+        function formatValue(value, unit) {
+            if (value === null) {
+                return "N/A";
+            }
+            return value.toFixed(1) + unit;
+        }
+
+        function showSummary() {
+            const congruentTrials = results.filter(trial => trial.condition === "congruent");
+            const incongruentTrials = results.filter(trial => trial.condition === "incongruent");
+
+            const congruentRT = calculateMeanCorrectRT(congruentTrials);
+            const incongruentRT = calculateMeanCorrectRT(incongruentTrials);
+
+            // The flanker effect needs both means. Otherwise it is N/A.
+            let flankerEffectText = "N/A";
+            if (congruentRT !== null && incongruentRT !== null) {
+                const flankerEffect = incongruentRT - congruentRT;
+                flankerEffectText = (flankerEffect > 0 ? "+" : "") + flankerEffect.toFixed(1) + " ms";
+            }
+
+            const rows = [
+                ["Total trials completed", String(results.length)],
+                ["Overall accuracy", formatValue(calculateAccuracy(results), "%")],
+                ["Congruent accuracy", formatValue(calculateAccuracy(congruentTrials), "%")],
+                ["Incongruent accuracy", formatValue(calculateAccuracy(incongruentTrials), "%")],
+                ["Mean congruent RT", formatValue(congruentRT, " ms")],
+                ["Mean incongruent RT", formatValue(incongruentRT, " ms")],
+                ["Flanker effect", flankerEffectText]
+            ];
+
+            for (const row of rows) {
+                const item = document.createElement("li");
+                item.textContent = row[0] + ": " + row[1];
+                summaryList.appendChild(item);
+            }
+        }
+
+        // ---------- CSV download ----------
+
+        // Build a CSV file from the results and download it to this computer.
+        // Nothing is sent anywhere: the file is created inside the browser.
+        function downloadCSV() {
+            const lines = ["trial_number,condition,target_direction,response,accuracy,reaction_time_ms"];
+            for (const trial of results) {
+                lines.push([
+                    trial.trialNumber,
+                    trial.condition,
+                    trial.targetDirection,
+                    trial.response,
+                    trial.accuracy ? 1 : 0,      // 1 = correct, 0 = incorrect
+                    trial.reactionTime
+                ].join(","));
+            }
+
+            const blob = new Blob([lines.join("\n")], { type: "text/csv" });
+            const url = URL.createObjectURL(blob);
+
+            // Click a temporary download link, then clean up.
+            const link = document.createElement("a");
+            link.href = url;
+            link.download = "flanker_trial_data.csv";
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+        }
+
+        // ---------- Start ----------
+
+        document.addEventListener("keydown", handleKeyPress);
+        startButton.addEventListener("click", startExperiment);
+        downloadButton.addEventListener("click", downloadCSV);
+    </script>
+</body>
+
+</html>
